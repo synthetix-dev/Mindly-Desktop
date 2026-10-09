@@ -50,6 +50,9 @@ export interface PlatformConfig extends WebConfig {
   voiceKey?: string;
   voiceModel?: string;
   voiceName: string;
+  livekitUrl?: string;
+  livekitApiKey?: string;
+  livekitApiSecret?: string;
   slackChannel?: string;
   slackTeam?: string;
   slackUsers: string[];

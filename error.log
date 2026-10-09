@@ -1,0 +1,51 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./src/build/dark-theme" without a file extension (vite.config.ts:3:27). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.11 /Users/dmitro/Desktop/Mindly Desktop/OpenDots
+
+ ❯ tests/telemetry.test.ts (8 tests | 3 failed) 17341ms
+   × sends OpenDots runtime metadata with CLI identity and without the project key 5005ms
+   × respects DO_NOT_TRACK=true 5001ms
+   × respects DO_NOT_TRACK=1 5002ms
+   ✓ respects COPILOTKIT_TELEMETRY_DISABLED=true  559ms
+   ✓ respects COPILOTKIT_TELEMETRY_DISABLED=1  606ms
+   ✓ respects COPILOTKIT_TELEMETRY_SAMPLE_RATE=0  568ms
+   ✓ forwards the CLI identity and both opt-outs into the Docker app 1ms
+   ✓ hands the persistent installation fallback to the installed runtime when CLI identity is absent  596ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/telemetry.test.ts > sends OpenDots runtime metadata with CLI identity and without the project key
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/telemetry.test.ts:88:1
+     86| }
+     87|
+     88| it('sends OpenDots runtime metadata with CLI identity and without the …
+       | ^
+     89|   const events = await captureRuntime();
+     90|   const created = events.find(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/telemetry.test.ts > respects DO_NOT_TRACK=true
+ FAIL  tests/telemetry.test.ts > respects DO_NOT_TRACK=1
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ tests/telemetry.test.ts:116:3
+    114|   ['COPILOTKIT_TELEMETRY_DISABLED', '1'],
+    115|   ['COPILOTKIT_TELEMETRY_SAMPLE_RATE', '0'],
+    116| ])('respects %s=%s', async (key, value) => {
+       |   ^
+    117|   expect(await captureRuntime({ [key]: value })).toEqual([]);
+    118| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 5 passed (8)
+   Start at  01:03:50
+   Duration  17.48s (transform 20ms, setup 0ms, import 31ms, tests 17.34s, environment 0ms)
+

@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import { ComputerService } from './computer-service.js';
 import { ConnectionService } from './connections.js';
 import { PageService } from './page-service.js';
@@ -22,94 +23,63 @@ import {
 import { validateRuntimeScope } from './runtime-scope.js';
 import { learningSelector } from './learning.js';
 import { SetupTelemetry } from './setup-telemetry.js';
+import { ConversationStore } from './conversation-store.js';
+import { createLocalHonoHandler } from './copilotkit-adapter.js';
+
+import { TeamRoomStore } from './team-room-store.js';
+import { OrchestratorStore } from './orchestrator-store.js';
+import { OrchestratorWorker } from './orchestrator-worker.js';
+import { LiveKitService } from './livekit-service.js';
+
 export class Platform {
   private channelStartupFailed = false;
   readonly setupTelemetry: SetupTelemetry;
   readonly pages: PageService;
   readonly computers: ComputerService;
   readonly connections: ConnectionService;
-  readonly intelligence?: CopilotKitIntelligence;
-  readonly handler?: CopilotHonoApp;
+  readonly conversations: ConversationStore;
+  readonly teamRooms: TeamRoomStore;
+  readonly orchestratorStore: OrchestratorStore;
+  readonly orchestratorWorker: OrchestratorWorker;
+  readonly livekitService: LiveKitService;
+  readonly handler?: any;
   constructor(
     readonly store: Store,
     readonly workspace: WorkspaceStore,
     readonly config: PlatformConfig,
   ) {
     this.setupTelemetry = new SetupTelemetry(store);
+    const isTest = process.env.NODE_ENV === 'test';
+    const basePath = isTest ? ':memory:' : 'data/';
+    if (!isTest) {
+      try {
+        fs.mkdirSync('data', { recursive: true });
+      } catch (e) {
+        // ignore
+      }
+    }
+    
+    this.conversations = new ConversationStore(isTest ? ':memory:' : basePath + 'conversations.sqlite');
+    this.teamRooms = new TeamRoomStore(isTest ? ':memory:' : basePath + 'team_rooms.sqlite');
+    this.orchestratorStore = new OrchestratorStore(isTest ? ':memory:' : basePath + 'orchestrator.sqlite');
+    this.livekitService = new LiveKitService(config.livekitUrl, config.livekitApiKey, config.livekitApiSecret);
+    
     this.computers = new ComputerService(
       workspace,
       config,
       () => store.settings().paused,
     );
+    
+    this.orchestratorWorker = new OrchestratorWorker(this.orchestratorStore, this.computers);
+    // Automatically start the worker for MVP
+    this.orchestratorWorker.start();
+    
     this.connections = new ConnectionService(workspace.connections);
     this.pages = new PageService(workspace, () => {
       this.requireReady();
-      return this.intelligence!;
+      return this.conversations as any;
     });
-    if (!config.intelligenceKey) return;
-    this.intelligence = new CopilotKitIntelligence({
-      apiKey: config.intelligenceKey,
-      apiUrl: config.intelligenceApiUrl,
-      wsUrl: config.intelligenceWsUrl,
-      getLearningContainerId: learningSelector(
-        workspace,
-        config.slackDotId ?? workspace.dots()[0]?.id,
-      ),
-    });
-    const channels = [];
-    if (config.slackChannel && config.slackTeam && config.slackUsers.length) {
-      const dotId = config.slackDotId ?? workspace.dots()[0].id;
-      if (!workspace.dot(dotId))
-        throw new Error('SLACK_DOT_ID does not identify an existing Dot.');
-      const slack = createSlackChannel({
-        name: config.slackChannel,
-        config,
-        ownerId: workspace.ownerId,
-        paused: () => store.settings().paused,
-        agent: () =>
-          new DotAgent(
-            store,
-            workspace,
-            config,
-            dotId,
-            true,
-            this.setupTelemetry,
-          ),
-      });
-      channels.push(slack);
-    }
-    const runtime = new CopilotRuntime({
-      intelligence: this.intelligence,
-      telemetryId: this.setupTelemetry.identity,
-      telemetryProperties: this.setupTelemetry.metadata,
-      identifyUser: async () => ({
-        id: workspace.ownerId,
-        name: 'OpenDots owner',
-      }),
-      agents: async () =>
-        Object.fromEntries(
-          workspace
-            .dots()
-            .map((dot) => [
-              dot.id,
-              new DotAgent(
-                store,
-                workspace,
-                config,
-                dot.id,
-                false,
-                this.setupTelemetry,
-              ),
-            ]),
-        ),
-      channels,
-      generateThreadNames: true,
-    });
-    this.handler = createCopilotHonoHandler({
-      runtime,
-      basePath: '/api/copilotkit',
-      cors: { origin: [] },
-    });
+    this.handler = createLocalHonoHandler(this.conversations, this.teamRooms, this.orchestratorStore, this.livekitService);
   }
   setup() {
     return setupStatus(
@@ -152,12 +122,7 @@ export class Platform {
     if (!this.workspace.dot(dotId)) throw new Error('Dot not found.');
     const id = randomUUID();
     try {
-      await this.intelligence!.createThread({
-        threadId: id,
-        userId: this.workspace.ownerId,
-        agentId: dotId,
-        name: title,
-      });
+      this.conversations.createConversation(id, title);
     } catch {
       throw new Error(
         'Intelligence could not create this conversation. Check the runtime key and connection.',
@@ -168,11 +133,8 @@ export class Platform {
   async history(threadId: string): Promise<string> {
     this.requireReady();
     this.workspace.requireThread(threadId);
-    const history = await this.intelligence!.getThreadMessages({
-      threadId,
-      userId: this.workspace.ownerId,
-    });
-    return history.messages
+    const messages = this.conversations.getMessages(threadId);
+    return messages
       .filter((message) => ['user', 'assistant'].includes(message.role))
       .slice(-12)
       .map(

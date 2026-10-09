@@ -48,6 +48,9 @@ import { TaskRow } from './TaskPresentation';
 import { TaskActions } from './TaskActions';
 import { WorkspaceDialog, type Dialog } from './WorkspaceDialog';
 import { submitComposerOnEnter } from './chat-composer';
+import { TeamRoom } from './TeamRoom';
+import { TaskApprovals } from './TaskApprovals';
+import { VoiceRoom } from './VoiceRoom';
 
 function describeFailure(error: unknown, fallback: string) {
   return {
@@ -62,7 +65,7 @@ export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceState>();
   const [selectedDot, setSelectedDot] = useState('');
   const [selectedThread, setSelectedThread] = useState<string>();
-  const [view, rawSetView] = useState<'chat' | 'tasks' | 'memories' | 'space'>(
+  const [view, rawSetView] = useState<'chat' | 'tasks' | 'memories' | 'space' | 'team_room' | 'approvals' | 'voice'>(
     'chat',
   );
   const dirtyPage = useRef(false);
@@ -473,6 +476,36 @@ export function App() {
         )}
         <div className="sidebar-bottom">
           <button
+            className={`nav-item ${view === 'team_room' ? 'active' : ''}`}
+            onClick={() => {
+              setView('team_room');
+              setMobile(false);
+            }}
+          >
+            <MessageCircle size={17} />
+            <span>Team Room</span>
+          </button>
+          <button
+            className={`nav-item ${view === 'voice' ? 'active' : ''}`}
+            onClick={() => {
+              setView('voice');
+              setMobile(false);
+            }}
+          >
+            <MessageCircle size={17} />
+            <span>Voice Meetings</span>
+          </button>
+          <button
+            className={`nav-item ${view === 'approvals' ? 'active' : ''}`}
+            onClick={() => {
+              setView('approvals');
+              setMobile(false);
+            }}
+          >
+            <Clock3 size={17} />
+            <span>Task Approvals</span>
+          </button>
+          <button
             className={`nav-item ${view === 'tasks' ? 'active' : ''}`}
             onClick={() => {
               setView('tasks');
@@ -537,11 +570,17 @@ export function App() {
             <strong>
               {view === 'chat'
                 ? dot.name
-                : view === 'tasks'
-                  ? 'Activity'
-                  : view === 'space'
-                    ? 'Pages'
-                    : 'Memories'}
+                : view === 'team_room'
+                  ? 'Team Room'
+                  : view === 'voice'
+                    ? 'Voice Meetings'
+                  : view === 'approvals'
+                    ? 'Approvals'
+                    : view === 'tasks'
+                      ? 'Activity'
+                      : view === 'space'
+                        ? 'Pages'
+                        : 'Memories'}
             </strong>
           </div>
           <div className="top-actions">
@@ -614,6 +653,12 @@ export function App() {
               }
             }}
           />
+        ) : view === 'team_room' ? (
+          <TeamRoom roomId="demo-room-1" />
+        ) : view === 'approvals' ? (
+          <TaskApprovals />
+        ) : view === 'voice' ? (
+          <VoiceRoom roomName="demo-voice-room" participantName="CEO" />
         ) : view === 'chat' ? (
           <div className={`chat-workspace ${pane ? 'split' : ''}`}>
             <div className="chat-column">
