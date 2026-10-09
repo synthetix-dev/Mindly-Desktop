@@ -112,7 +112,7 @@ export class Platform {
     
     this.orchestratorWorker = new OrchestratorWorker(
       this.orchestratorStore,
-      {},
+      this,
       workspace,
       join(this.dataDir, 'artifacts')
     );

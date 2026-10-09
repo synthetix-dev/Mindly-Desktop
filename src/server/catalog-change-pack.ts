@@ -14,6 +14,12 @@ export interface CatalogChange {
 
 export class CatalogChangePack {
   static async processCsvInput(fileContent: string): Promise<{ manifestId: string, qaReport: string, csvOutput: string }> {
+    const lines = fileContent.trim().split('\n');
+    if (lines.length === 0) throw new Error("CSV input is empty");
+    const header = lines[0].replace(/\r/g, '').trim();
+    if (header !== "sku,field,before,proposed,source_ref,confidence_note,review_state,validation_result") {
+      throw new Error("Invalid CSV headers");
+    }
     const manifestId = randomUUID();
     const apiKey = process.env.OPENAI_API_KEY;
     
@@ -56,7 +62,6 @@ Rules:
     let csvOutput = data.choices?.[0]?.message?.content?.trim() || '';
     if (csvOutput.startsWith('```csv')) csvOutput = csvOutput.replace(/^```csv\n/, '').replace(/\n```$/, '');
 
-    const lines = fileContent.trim().split('\n');
     const qaReport = `# QA Report for Input Catalog
 - Total SKUs parsed: ${Math.max(0, lines.length - 1)}
 - Agent Status: Analysis Complete.

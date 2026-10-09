@@ -29,11 +29,11 @@ export function createLocalHonoHandler(
     if (!livekitService?.isConfigured()) {
       return c.json({ error: 'LiveKit is not configured in .env' }, 500);
     }
-    const { roomName, participantName } = await c.req.json();
+    const { roomName, participantName, dotId } = await c.req.json();
     try {
       await livekitService.createRoom(roomName);
       const token = await livekitService.getJoinToken(roomName, participantName || 'User');
-      return c.json({ token });
+      return c.json({ token, dotId });
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
@@ -45,15 +45,13 @@ export function createLocalHonoHandler(
     try {
       const { roomId, prompt, dotId } = await c.req.json();
       
-      // We map the LiveKit room to a threadId. For simplicity, roomName IS the threadId.
-      const threadId = roomId; 
+      const targetDotId = dotId || platform.workspace.dots()[0].id;
+      const threadId = `${roomId}-${targetDotId}`; 
       
-      // Ensure thread exists
       try {
         platform.workspace.requireThread(threadId);
       } catch {
-        // Create the thread dynamically for this room
-        platform.workspace.bindThread(threadId, dotId || platform.workspace.dots()[0].id, `Voice Room ${roomId}`);
+        platform.workspace.bindThread(threadId, targetDotId, `Voice Room ${roomId}`);
         if (platform['threads']) {
            await platform['threads'].getOrCreateThread({ threadId, name: `Voice Room ${roomId}` });
         }
@@ -77,10 +75,7 @@ export function createLocalHonoHandler(
   });
   
   app.post('/tasks/:id/approve', (c) => {
-    const role = c.req.header('x-user-role');
-    if (role !== 'admin') {
-      return c.json({ error: 'Forbidden: Admins only' }, 403);
-    }
+    // Relying on ownerToken middleware in app.ts for authorization
     const { id } = c.req.param();
     orchestratorStore['db'].prepare('UPDATE approved_tasks SET status="queued" WHERE id=? AND status="pending_approval"').run(id);
     return c.json({ success: true });
@@ -88,10 +83,7 @@ export function createLocalHonoHandler(
 
   // Backup API (Phase 4)
   app.post('/backup', async (c) => {
-    const role = c.req.header('x-user-role');
-    if (role !== 'admin') {
-      return c.json({ error: 'Forbidden: Admins only' }, 403);
-    }
+    // Relying on ownerToken middleware in app.ts for authorization
     try {
       const fs = await import('node:fs/promises');
       await fs.mkdir('data/backups', { recursive: true });
@@ -114,31 +106,37 @@ export function createLocalHonoHandler(
 
   app.post('/rooms/:id/messages', async (c) => {
     const { id } = c.req.param();
-    const { content } = await c.req.json();
+    const { content, activeDots } = await c.req.json();
     const msgId = crypto.randomUUID();
     teamRooms['db'].prepare('INSERT INTO room_messages (id, roomId, senderId, content, createdAt) VALUES (?, ?, ?, ?, ?)').run(msgId, id, 'user', content, Date.now());
     
-    // Call actual OpenDots Agent for @agent or Summarize
-    if (content.includes('@agent') || content.includes('Summarize')) {
+    if (content.includes('@') || content.includes('Summarize')) {
       if (platform) {
-        try {
-          // Use the room id as thread id
-          const threadId = id;
+        const dotsToCall = Array.isArray(activeDots) && activeDots.length > 0 
+          ? activeDots 
+          : [platform.workspace.dots()[0].id];
+        
+        for (const dotId of dotsToCall) {
           try {
-            platform.workspace.requireThread(threadId);
-          } catch {
-            platform.workspace.bindThread(threadId, platform.workspace.dots()[0].id, `Team Room ${id}`);
-            if (platform['threads']) {
-               await platform['threads'].getOrCreateThread({ threadId, name: `Team Room ${id}` });
+            const threadId = `${id}-${dotId}`;
+            try {
+              platform.workspace.requireThread(threadId);
+            } catch {
+              platform.workspace.bindThread(threadId, dotId, `Team Room ${id} - Agent ${dotId}`);
+              if (platform['threads']) {
+                 await platform['threads'].getOrCreateThread({ threadId, name: `Team Room ${id} - Agent ${dotId}` });
+              }
             }
-          }
 
-          const controller = new AbortController();
-          const result = await platform.turnDetailed(threadId, content, controller.signal, { opendotsSource: 'scheduled_task' });
-          const replyId = crypto.randomUUID();
-          teamRooms['db'].prepare('INSERT INTO room_messages (id, roomId, senderId, content, createdAt) VALUES (?, ?, ?, ?, ?)').run(replyId, id, 'agent', result.text, Date.now());
-        } catch (e) {
-          console.error('Agent Team Room error', e);
+            const controller = new AbortController();
+            const result = await platform.turnDetailed(threadId, content, controller.signal, { opendotsSource: 'team_room' });
+            if (result.text) {
+              const replyId = crypto.randomUUID();
+              teamRooms['db'].prepare('INSERT INTO room_messages (id, roomId, senderId, content, createdAt) VALUES (?, ?, ?, ?, ?)').run(replyId, id, dotId, result.text, Date.now());
+            }
+          } catch (e) {
+            console.error(`Agent ${dotId} Team Room error`, e);
+          }
         }
       }
     }

@@ -1,10 +1,12 @@
 import { OrchestratorStore, ApprovedTask } from './orchestrator-store.js';
 import { CatalogChangePack } from './catalog-change-pack.js';
+import { Platform } from './platform.js';
+import { randomUUID } from 'node:crypto';
 
 export class OrchestratorWorker {
   constructor(
     private store: OrchestratorStore,
-    private employees: any,
+    private platform: Platform,
     private workspace: any,
     private artifactsDir: string
   ) {}
@@ -30,34 +32,28 @@ export class OrchestratorWorker {
       const { manifestId, qaReport } = await CatalogChangePack.processCsvInput(task.inputs);
       task.artifacts = JSON.stringify({ manifestId, qaReport });
     } else {
-      const apiKey = process.env.OPENAI_API_KEY;
-      if (!apiKey || apiKey === 'dummy_key') throw new Error("OPENAI_API_KEY missing");
+      const threadId = randomUUID();
+      const dotId = task.ownerDot || this.workspace.dots()[0]?.id || 'dot_default';
+      const title = `Task: ${task.goal.substring(0, 30)}`;
+      this.workspace.bindThread(threadId, dotId, title);
+
+      const controller = new AbortController();
+      const prompt = `Task Goal: ${task.goal}\nInputs: ${task.inputs}\nProduce a report of the final state.`;
       
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: 'You are an autonomous orchestrator worker. Perform the task and produce a report of the final state.' },
-            { role: 'user', content: `Task Goal: ${task.goal}\nInputs: ${task.inputs}` }
-          ],
-          temperature: 0.2
-        })
+      const result = await this.platform.turnDetailed(threadId, prompt, controller.signal, {
+        taskDetails: task
       });
       
-      const data = await response.json();
-      if (data.error) throw new Error(`OpenAI Error: ${data.error.message}`);
-      
-      const resultText = data.choices?.[0]?.message?.content?.trim() || 'No result generated';
+      const resultText = result.text;
       const fs = await import('node:fs/promises');
-      await fs.mkdir('data/artifacts', { recursive: true });
-      const artifactName = `data/artifacts/task_${task.id}.md`;
+      await fs.mkdir(this.artifactsDir, { recursive: true });
+      const artifactName = `${this.artifactsDir}/task_${task.id}.md`;
       await fs.writeFile(artifactName, resultText);
-      task.artifacts = JSON.stringify({ artifactFile: artifactName, summary: resultText.substring(0, 100) + '...' });
+      task.artifacts = JSON.stringify({ 
+        artifactFile: artifactName, 
+        summary: resultText.substring(0, 100) + '...',
+        toolCalls: result.toolCalls
+      });
     }
     
     // Actually update the DB so artifacts are saved
