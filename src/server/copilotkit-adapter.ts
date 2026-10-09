@@ -1,3 +1,4 @@
+
 import { Hono } from 'hono';
 import { ConversationStore } from './conversation-store.js';
 import { TeamRoomStore } from './team-room-store.js';
@@ -137,7 +138,6 @@ export function createLocalHonoHandler(
     return c.json({ success: true });
   });
 
-import { streamText } from 'hono/streaming';
 
 // AG-UI fallback for CopilotKit Intelligence SDK calls
   app.all('/*', async (c) => {
@@ -159,7 +159,7 @@ import { streamText } from 'hono/streaming';
         c.header('Cache-Control', 'no-cache');
         c.header('Connection', 'keep-alive');
         
-        return streamText(c, async (stream) => {
+        return streamText(c, async (stream: any) => {
           try {
             const response = await fetch('https://api.openai.com/v1/chat/completions', {
               method: 'POST',
