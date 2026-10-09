@@ -59,6 +59,12 @@ export interface PlatformConfig extends WebConfig {
   slackDotId?: string;
   runtimeUrl: string;
   ownerToken?: string;
+  /** Admin-equivalent token for a read/write-limited operator role. */
+  operatorToken?: string;
+  /** True when conversations run on the in-process runtime instead of CopilotKit Intelligence. */
+  localRuntime?: boolean;
+  /** Directory for the local runtime's SQLite files and task artifacts. */
+  dataDir?: string;
 }
 export function setupStatus(
   config: PlatformConfig,
@@ -66,7 +72,7 @@ export function setupStatus(
   activationFailed = false,
 ): SetupStatus {
   const missing = [
-    !config.intelligenceKey && INTELLIGENCE_KEY_MISSING_LABEL,
+    !config.localRuntime && !config.intelligenceKey && INTELLIGENCE_KEY_MISSING_LABEL,
     !config.apiKey && 'OPENAI_API_KEY',
     !config.model && 'OPENAI_MODEL',
   ].filter((item): item is string => !!item);
@@ -83,7 +89,7 @@ export function setupStatus(
       ? 'setup_required'
       : 'not_configured';
   return {
-    intelligence: !!config.intelligenceKey,
+    intelligence: !!config.localRuntime || !!config.intelligenceKey,
     model: !!(config.apiKey && config.model),
     browser: !!(config.browserUrl && config.browserSecret),
     voice: !!(config.voiceKey && config.voiceModel && !missing.length),

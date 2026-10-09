@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { LiveKitRoom, RoomAudioRenderer, AudioConference } from '@livekit/components-react';
+import '@livekit/components-styles';
 
 export function TeamRoom({ roomId = 'default-room' }: { roomId?: string }) {
   const [messages, setMessages] = useState<{id: string, role: string, content: string}[]>([]);
   const [participants, setParticipants] = useState<string[]>([]);
   const [input, setInput] = useState('');
+  const [token, setToken] = useState<string | null>(null);
 
   const loadMessages = async () => {
     try {
@@ -22,6 +25,20 @@ export function TeamRoom({ roomId = 'default-room' }: { roomId?: string }) {
     const interval = setInterval(loadMessages, 3000);
     return () => clearInterval(interval);
   }, [roomId]);
+
+  const joinVoice = async () => {
+    try {
+      const res = await fetch('/api/copilotkit/livekit/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomName: roomId, participantName: 'User' })
+      });
+      const data = await res.json();
+      if (data.token) {
+        setToken(data.token);
+      }
+    } catch (e) { console.error(e); }
+  };
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -43,10 +60,13 @@ export function TeamRoom({ roomId = 'default-room' }: { roomId?: string }) {
       <div className="flex justify-between items-center mb-4 border-b pb-2">
         <h2 className="text-xl font-bold">Team Room: {roomId}</h2>
         <button 
-          onClick={() => setParticipants(p => [...p, 'Catalog Operator'])}
+          onClick={() => {
+            setParticipants(p => [...p, 'dot-1']); // Map to first dot
+            joinVoice();
+          }}
           className="bg-blue-600 text-white px-3 py-1 rounded"
         >
-          + Add AI Employee
+          + Add AI Employee (Voice)
         </button>
       </div>
       
@@ -58,6 +78,22 @@ export function TeamRoom({ roomId = 'default-room' }: { roomId?: string }) {
           </div>
         ))}
       </div>
+
+      {token && (
+        <div className="h-24 bg-gray-100 rounded mb-4">
+          <LiveKitRoom
+            video={false}
+            audio={true}
+            token={token}
+            serverUrl={process.env.LIVEKIT_URL || 'wss://demo.livekit.cloud'}
+            data-lk-theme="default"
+            style={{ height: '100%' }}
+          >
+            <AudioConference />
+            <RoomAudioRenderer />
+          </LiveKitRoom>
+        </div>
+      )}
 
       <div className="flex gap-2">
         <input 

@@ -97,7 +97,7 @@ export class DotAgent extends AbstractAgent {
           dot.id,
         );
         if (
-          !this.config.intelligenceKey ||
+          (!this.config.intelligenceKey && !this.config.localRuntime) ||
           !this.config.apiKey ||
           !this.config.model
         ) {

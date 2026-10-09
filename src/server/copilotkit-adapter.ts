@@ -1,15 +1,17 @@
-
 import { Hono } from 'hono';
 import { ConversationStore } from './conversation-store.js';
 import { TeamRoomStore } from './team-room-store.js';
 import { OrchestratorStore } from './orchestrator-store.js';
 import { LiveKitService } from './livekit-service.js';
+import crypto from 'crypto';
+import { Platform } from './platform.js';
 
 export function createLocalHonoHandler(
   conversations: ConversationStore, 
   teamRooms: TeamRoomStore,
   orchestratorStore: OrchestratorStore,
-  livekitService?: LiveKitService
+  livekitService?: LiveKitService,
+  platform?: Platform
 ) {
   const app = new Hono().basePath('/api/copilotkit');
 
@@ -34,6 +36,35 @@ export function createLocalHonoHandler(
       return c.json({ token });
     } catch (e) {
       return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // REST bridge for LiveKit Agents
+  app.post('/livekit/turn', async (c) => {
+    if (!platform) return c.json({ error: 'Platform unavailable' }, 500);
+    try {
+      const { roomId, prompt, dotId } = await c.req.json();
+      
+      // We map the LiveKit room to a threadId. For simplicity, roomName IS the threadId.
+      const threadId = roomId; 
+      
+      // Ensure thread exists
+      try {
+        platform.workspace.requireThread(threadId);
+      } catch {
+        // Create the thread dynamically for this room
+        platform.workspace.bindThread(threadId, dotId || platform.workspace.dots()[0].id, `Voice Room ${roomId}`);
+        if (platform['threads']) {
+           await platform['threads'].getOrCreateThread({ threadId, name: `Voice Room ${roomId}` });
+        }
+      }
+
+      const controller = new AbortController();
+      const res = await platform.turnDetailed(threadId, prompt, controller.signal, { opendotsSource: 'voice_receipt' });
+      return c.json({ text: res.text, toolCalls: res.toolCalls });
+    } catch (e: any) {
+      console.error('LiveKit Turn Error:', e);
+      return c.json({ error: String(e.message || e) }, 500);
     }
   });
 
@@ -87,127 +118,32 @@ export function createLocalHonoHandler(
     const msgId = crypto.randomUUID();
     teamRooms['db'].prepare('INSERT INTO room_messages (id, roomId, senderId, content, createdAt) VALUES (?, ?, ?, ?, ?)').run(msgId, id, 'user', content, Date.now());
     
-    // Auto-reply for @agent / Summarize
-    if (content.includes('Summarize')) {
-      let aiText = 'Generated Minutes: \n- Decision 1\n- Needs Review';
-      const apiKey = process.env.OPENAI_API_KEY;
-      if (apiKey && apiKey !== 'dummy_key') {
-        const history = teamRooms['db'].prepare('SELECT content FROM room_messages WHERE roomId=?').all(id).map((m: any) => m.content).join('\n');
+    // Call actual OpenDots Agent for @agent or Summarize
+    if (content.includes('@agent') || content.includes('Summarize')) {
+      if (platform) {
         try {
-          const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-              model: 'gpt-4o',
-              messages: [{
-                role: 'system', 
-                content: 'You are an AI meeting assistant. Summarize the following meeting into bulleted Minutes and extract action items.'
-              }, {
-                role: 'user',
-                content: history
-              }]
-            })
-          });
-          const data = await response.json();
-          if (data.choices?.[0]?.message?.content) {
-            aiText = data.choices[0].message.content;
+          // Use the room id as thread id
+          const threadId = id;
+          try {
+            platform.workspace.requireThread(threadId);
+          } catch {
+            platform.workspace.bindThread(threadId, platform.workspace.dots()[0].id, `Team Room ${id}`);
+            if (platform['threads']) {
+               await platform['threads'].getOrCreateThread({ threadId, name: `Team Room ${id}` });
+            }
           }
+
+          const controller = new AbortController();
+          const result = await platform.turnDetailed(threadId, content, controller.signal, { opendotsSource: 'scheduled_task' });
+          const replyId = crypto.randomUUID();
+          teamRooms['db'].prepare('INSERT INTO room_messages (id, roomId, senderId, content, createdAt) VALUES (?, ?, ?, ?, ?)').run(replyId, id, 'agent', result.text, Date.now());
         } catch (e) {
-          console.error(e);
+          console.error('Agent Team Room error', e);
         }
       }
-
-      const replyId = crypto.randomUUID();
-      teamRooms['db'].prepare('INSERT INTO room_messages (id, roomId, senderId, content, createdAt) VALUES (?, ?, ?, ?, ?)').run(replyId, id, 'agent', aiText, Date.now());
-      
-      // Also propose a task
-      orchestratorStore.queueTask({
-        goal: 'Update catalog descriptions based on Team Room',
-        inputs: 'Minutes from room ' + id,
-        ownerDot: 'catalog-agent',
-        budget: 1000,
-        deadline: Date.now() + 86400000,
-        status: 'pending_approval',
-        artifacts: '[]'
-      });
     }
 
     return c.json({ success: true });
-  });
-
-
-// AG-UI fallback for CopilotKit Intelligence SDK calls
-  app.all('/*', async (c) => {
-    try {
-      const body = await c.req.json().catch(() => null);
-      if (body && body.messages === 'invalid') {
-        return c.json({ error: 'Validation failed' }, 400);
-      }
-      
-      // If valid messages exist, generate a real response
-      if (body && Array.isArray(body.messages)) {
-        const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey || apiKey === 'dummy_key') {
-          return c.json({ error: 'OpenAI API key missing' }, 500);
-        }
-        
-        // This is a minimal AG-UI compatible stream adapter (SSE)
-        c.header('Content-Type', 'text/event-stream');
-        c.header('Cache-Control', 'no-cache');
-        c.header('Connection', 'keep-alive');
-        
-        return streamText(c, async (stream: any) => {
-          try {
-            const response = await fetch('https://api.openai.com/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-              },
-              body: JSON.stringify({
-                model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-                messages: body.messages.map((m: any) => ({ role: m.role || 'user', content: m.content || m.text || '' })),
-                stream: true
-              })
-            });
-            
-            if (!response.body) throw new Error('No stream body');
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              const chunk = decoder.decode(value);
-              const lines = chunk.split('\n').filter(l => l.trim().startsWith('data: '));
-              for (const line of lines) {
-                const data = line.replace(/^data: /, '').trim();
-                if (data === '[DONE]') continue;
-                try {
-                  const parsed = JSON.parse(data);
-                  const content = parsed.choices?.[0]?.delta?.content;
-                  if (content) {
-                    await stream.write(content);
-                  }
-                } catch (e) {
-                  // ignore parse error on partial chunks
-                }
-              }
-            }
-          } catch (e) {
-            await stream.write(`[Error: ${e}]`);
-          }
-        });
-      }
-    } catch {
-      // ignore
-    }
-    
-    // Fallback error if not matched
-    return c.json({ error: 'Invalid CopilotKit Intelligence request format.' }, 400);
   });
 
   return app;

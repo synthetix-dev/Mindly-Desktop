@@ -82,6 +82,15 @@ export class ConversationStore {
         createdAt INTEGER NOT NULL,
         FOREIGN KEY (conversationId) REFERENCES conversations (id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS thread_runs (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        threadId TEXT NOT NULL,
+        runId TEXT NOT NULL,
+        agentId TEXT NOT NULL,
+        events TEXT NOT NULL,
+        createdAt INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS thread_runs_thread ON thread_runs(threadId, seq);
       CREATE INDEX IF NOT EXISTS msgs_conv ON messages(conversationId, createdAt);
       CREATE INDEX IF NOT EXISTS turns_conv ON turns(conversationId, createdAt);
     `);
@@ -107,6 +116,33 @@ export class ConversationStore {
 
   getMessages(conversationId: string): Message[] {
     return this.db.prepare('SELECT * FROM messages WHERE conversationId=? ORDER BY createdAt ASC').all(conversationId) as unknown as Message[];
+  }
+
+  /** Event-sourced AG-UI history: one row per completed run (compacted events). */
+  saveRun(threadId: string, runId: string, agentId: string, events: unknown[]) {
+    if (!events.length) return;
+    this.db
+      .prepare(
+        'INSERT INTO thread_runs (threadId, runId, agentId, events, createdAt) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run(threadId, runId, agentId, JSON.stringify(events), Date.now());
+  }
+
+  loadRuns(
+    threadId: string,
+  ): { runId: string; agentId: string; events: any[]; createdAt: number }[] {
+    return (
+      this.db
+        .prepare(
+          'SELECT runId, agentId, events, createdAt FROM thread_runs WHERE threadId=? ORDER BY seq ASC',
+        )
+        .all(threadId) as unknown as {
+        runId: string;
+        agentId: string;
+        events: string;
+        createdAt: number;
+      }[]
+    ).map((row) => ({ ...row, events: JSON.parse(row.events) }));
   }
 
   close() {
