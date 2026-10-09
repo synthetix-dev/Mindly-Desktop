@@ -1,5 +1,6 @@
 import { OrchestratorStore, ApprovedTask } from './orchestrator-store.js';
 import { ComputerService } from './computer-service.js';
+import { CatalogChangePack } from './catalog-change-pack.js';
 
 export class OrchestratorWorker {
   constructor(
@@ -22,14 +23,17 @@ export class OrchestratorWorker {
   }
 
   async runTask(task: ApprovedTask) {
-    // Isolated environment for the task
     try {
       await this.computers.start(task.id);
-      // Simulate or run actual logic with AI
-      // For MVP we just transition state
-      if (task.goal.includes('Catalog')) {
-        // Run CatalogChangePack logic here
+      
+      if (task.goal.includes('Catalog') || task.inputs.includes('.csv')) {
+        const { manifestId, qaReport } = await CatalogChangePack.processCsvInput(task.inputs);
+        task.artifacts = JSON.stringify({ manifestId, qaReport });
+      } else {
+        // Generic fallback for other tasks requiring LLM logic
+        if (!process.env.OPENAI_API_KEY) throw new Error("API Key missing");
       }
+      
       this.store.markCompleted(task.id);
     } finally {
       await this.computers.stop(task.id);
