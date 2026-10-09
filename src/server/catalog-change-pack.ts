@@ -16,9 +16,10 @@ export class CatalogChangePack {
   static async processCsvInput(fileContent: string): Promise<{ manifestId: string, qaReport: string, csvOutput: string }> {
     const lines = fileContent.trim().split('\n');
     if (lines.length === 0) throw new Error("CSV input is empty");
-    const header = lines[0].replace(/\r/g, '').trim();
-    if (header !== "sku,field,before,proposed,source_ref,confidence_note,review_state,validation_result") {
-      throw new Error("Invalid CSV headers");
+    const header = lines[0].replace(/\r/g, '').trim().toLowerCase();
+    const columns = header.split(',');
+    if (!columns.includes("sku")) {
+      throw new Error("Invalid CSV headers: missing 'sku' column");
     }
     const manifestId = randomUUID();
     const apiKey = process.env.OPENAI_API_KEY;

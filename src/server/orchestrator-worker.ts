@@ -44,6 +44,10 @@ export class OrchestratorWorker {
         taskDetails: task
       });
       
+      if (!result.toolCalls || result.toolCalls.length === 0) {
+        throw new Error("Task failed: No tools were executed to verify the state.");
+      }
+
       const resultText = result.text;
       const fs = await import('node:fs/promises');
       await fs.mkdir(this.artifactsDir, { recursive: true });

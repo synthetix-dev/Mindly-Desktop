@@ -10,11 +10,13 @@ import * as silero from '@livekit/agents-plugin-silero';
 
 class PlatformLLM extends llm.LLM {
   private roomId: string;
+  private dotId: string;
   private endpoint: string;
 
-  constructor(roomId: string, endpoint: string = 'http://127.0.0.1:4310/api/copilotkit/livekit/turn') {
+  constructor(roomId: string, dotId: string, endpoint: string = 'http://127.0.0.1:4310/api/copilotkit/livekit/turn') {
     super();
     this.roomId = roomId;
+    this.dotId = dotId;
     this.endpoint = endpoint;
   }
 
@@ -43,6 +45,7 @@ class PlatformLLM extends llm.LLM {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               roomId: ((this as any).llm).roomId,
+              dotId: ((this as any).llm).dotId,
               prompt: prompt
             })
           });
@@ -79,6 +82,21 @@ export default defineAgent({
     await ctx.connect();
     console.log('Voice agent connected to room:', ctx.room.name);
 
+    let dotId = '';
+    try {
+      if (ctx.job.metadata) {
+        const meta = JSON.parse(ctx.job.metadata);
+        dotId = meta.dotId || '';
+      }
+    } catch (e) {
+      console.warn('Failed to parse job metadata', e);
+    }
+    
+    if (!dotId) {
+      // fallback for auto-dispatch or virtual participants
+      dotId = (ctx as any).participant?.identity || 'unknown-dot';
+    }
+
     const chatCtx = new llm.ChatContext();
     chatCtx.addMessage({
       role: 'system',
@@ -89,7 +107,7 @@ export default defineAgent({
       instructions: 'You are a voice assistant in the OpenDots platform. Be concise, friendly, and helpful. Respond strictly in Ukrainian.',
       vad: await silero.VAD.load(),
       stt: new openai.STT(),
-      llm: new PlatformLLM(ctx.room.name || 'default-room'),
+      llm: new PlatformLLM(ctx.room.name || 'default-room', dotId),
       tts: new openai.TTS(),
       chatCtx
     });
@@ -98,7 +116,7 @@ export default defineAgent({
     await session.start({ agent, room: ctx.room });
     
     await session.say('Привіт! Я штучний інтелект компанії OpenDots. Як я можу допомогти?', { allowInterruptions: true });
-    console.log('AI Agent is now listening in the LiveKit room...');
+    console.log(`AI Agent (${dotId}) is now listening in the LiveKit room...`);
   },
 });
 

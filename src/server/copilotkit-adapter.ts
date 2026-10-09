@@ -32,6 +32,15 @@ export function createLocalHonoHandler(
     const { roomName, participantName, dotId } = await c.req.json();
     try {
       await livekitService.createRoom(roomName);
+      
+      if (dotId) {
+        try {
+          await livekitService.dispatchAgent(roomName, dotId);
+        } catch (dispatchErr) {
+          console.warn('Explicit agent dispatch failed, might be relying on auto-dispatch:', dispatchErr);
+        }
+      }
+
       const token = await livekitService.getJoinToken(roomName, participantName || 'User');
       return c.json({ token, dotId });
     } catch (e) {
@@ -75,7 +84,19 @@ export function createLocalHonoHandler(
   });
   
   app.post('/tasks/:id/approve', (c) => {
-    // Relying on ownerToken middleware in app.ts for authorization
+    const authHeader = c.req.header('authorization') || '';
+    const token = authHeader.replace(/^Bearer /, '');
+    const expectedToken = process.env.OWNER_TOKEN;
+    
+    if (!expectedToken || token !== expectedToken) {
+      return c.json({ error: 'Unauthorized: Invalid ownerToken' }, 401);
+    }
+    
+    const role = c.req.header('x-user-role');
+    if (role !== 'admin') {
+      return c.json({ error: 'Forbidden: Admin role required' }, 403);
+    }
+
     const { id } = c.req.param();
     orchestratorStore['db'].prepare('UPDATE approved_tasks SET status="queued" WHERE id=? AND status="pending_approval"').run(id);
     return c.json({ success: true });
@@ -116,6 +137,16 @@ export function createLocalHonoHandler(
           ? activeDots 
           : [platform.workspace.dots()[0].id];
         
+        // Get the last 5 messages to provide context
+        const last5Msgs = teamRooms['db'].prepare('SELECT senderId, content FROM room_messages WHERE roomId=? ORDER BY createdAt DESC LIMIT 5').all(id).reverse();
+        
+        let contextStr = "Recent conversation context:\\n";
+        for (const m of last5Msgs) {
+          const sender = m.senderId === 'user' ? 'User' : `Agent ${m.senderId}`;
+          contextStr += `${sender}: ${m.content}\\n`;
+        }
+        contextStr += `\\nUser's new message: ${content}`;
+        
         for (const dotId of dotsToCall) {
           try {
             const threadId = `${id}-${dotId}`;
@@ -129,7 +160,7 @@ export function createLocalHonoHandler(
             }
 
             const controller = new AbortController();
-            const result = await platform.turnDetailed(threadId, content, controller.signal, { opendotsSource: 'team_room' });
+            const result = await platform.turnDetailed(threadId, contextStr, controller.signal, { opendotsSource: 'team_room' });
             if (result.text) {
               const replyId = crypto.randomUUID();
               teamRooms['db'].prepare('INSERT INTO room_messages (id, roomId, senderId, content, createdAt) VALUES (?, ?, ?, ?, ?)').run(replyId, id, dotId, result.text, Date.now());
