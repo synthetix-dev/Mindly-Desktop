@@ -18,7 +18,7 @@
     "lint": "eslint src tests vite.config.ts",
     "format": "prettier --write src tests *.json *.ts *.js index.html public .github Dockerfile \"compose*.yml\" deployment README.md docs .env.example --ignore-unknown",
     "check-format": "prettier --check src tests *.json *.ts *.js index.html public .github Dockerfile \"compose*.yml\" deployment README.md docs .env.example --ignore-unknown",
-    "agent": "tsx src/server/agent-livekit.ts"
+    "agent": "node --env-file-if-exists=.env --import tsx src/server/agent-livekit.ts"
   },
   "keywords": [],
   "author": "Atai Barkai",
@@ -54,6 +54,7 @@
     "livekit-client": "^2.22.4",
     "livekit-server-sdk": "^2.19.1",
     "lucide-react": "^1.48.0",
+    "papaparse": "^5.7.0",
     "playwright": "^1.63.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -65,6 +66,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.3",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/react-test-renderer": "^19.3.0",

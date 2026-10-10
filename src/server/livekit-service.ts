@@ -3,8 +3,8 @@ import { AgentDispatchClient } from 'livekit-server-sdk';
 import { randomUUID } from 'node:crypto';
 
 export class LiveKitService {
-  private roomService: RoomServiceClient | undefined;
-  private agentDispatch: AgentDispatchClient | undefined;
+  public roomService: RoomServiceClient | undefined;
+  public agentDispatch: AgentDispatchClient | undefined;
 
   constructor(
     private readonly wsUrl?: string,

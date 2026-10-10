@@ -12,12 +12,14 @@ class PlatformLLM extends llm.LLM {
   private roomId: string;
   private dotId: string;
   private endpoint: string;
+  private ownerToken: string;
 
   constructor(roomId: string, dotId: string, endpoint: string = 'http://127.0.0.1:4310/api/copilotkit/livekit/turn') {
     super();
     this.roomId = roomId;
     this.dotId = dotId;
     this.endpoint = endpoint;
+    this.ownerToken = process.env.OWNER_TOKEN || '';
   }
 
   label(): string { return 'PlatformLLM'; }
@@ -33,20 +35,26 @@ class PlatformLLM extends llm.LLM {
       runPromise: Promise<void>;
       async run() {
         try {
-          const msgs = (this.chatCtx as any).messages; const lastMsg = msgs[msgs.length - 1];
+          const msgs = (this.chatCtx as any).messages; 
+          const lastMsg = msgs[msgs.length - 1];
           if (!lastMsg || lastMsg.role !== 'user' || typeof lastMsg.content !== 'string') {
-            return; // Only respond to user messages
+            return;
           }
           
           const prompt = lastMsg.content;
+          const identity = lastMsg.name || 'user'; // Extract speaker identity if provided
           
           const res = await fetch(((this as any).llm).endpoint, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${((this as any).llm).ownerToken}`
+            },
             body: JSON.stringify({
               roomId: ((this as any).llm).roomId,
               dotId: ((this as any).llm).dotId,
-              prompt: prompt
+              prompt: prompt,
+              identity: identity
             })
           });
           
@@ -79,44 +87,53 @@ class PlatformLLM extends llm.LLM {
 
 export default defineAgent({
   entry: async (ctx) => {
-    await ctx.connect();
-    console.log('Voice agent connected to room:', ctx.room.name);
-
-    let dotId = '';
     try {
-      if (ctx.job.metadata) {
-        const meta = JSON.parse(ctx.job.metadata);
-        dotId = meta.dotId || '';
+      await ctx.connect();
+      console.log('Voice agent connected to room:', ctx.room.name);
+  
+      let dotId = '';
+      try {
+        if (ctx.job.metadata) {
+          const meta = JSON.parse(ctx.job.metadata);
+          dotId = meta.dotId || '';
+        }
+      } catch (e) {
+        console.warn('Failed to parse job metadata', e);
       }
+      
+      if (!dotId) {
+        // fallback for auto-dispatch or virtual participants
+        dotId = (ctx as any).participant?.identity || 'unknown-dot';
+      }
+  
+      const chatCtx = new llm.ChatContext();
+      chatCtx.addMessage({
+        role: 'system',
+        content: `You are a voice assistant in the OpenDots platform. Be concise, friendly, and helpful. Respond strictly in Ukrainian. Keep answers under 3 sentences. 
+TURN-TAKING RULE: If there are multiple AI agents or users speaking, wait for your turn. Do not talk over others. Only respond when addressed or when it is naturally your turn in the conversation.`
+      });
+  
+      const agent = voice.Agent.create({
+        instructions: `You are a voice assistant in the OpenDots platform. Be concise, friendly, and helpful. Respond strictly in Ukrainian. Keep answers under 3 sentences. 
+TURN-TAKING RULE: If there are multiple AI agents or users speaking, wait for your turn. Do not talk over others. Only respond when addressed or when it is naturally your turn in the conversation.`,
+        vad: await silero.VAD.load(),
+        stt: new openai.STT(),
+        llm: new PlatformLLM(ctx.room.name || 'default-room', dotId),
+        tts: new openai.TTS(),
+        chatCtx
+      });
+  
+      const session = new voice.AgentSession();
+      
+      ctx.room.on('disconnected', () => console.log('Room disconnected'));
+  
+      await session.start({ agent, room: ctx.room });
+      
+      await session.say('Привіт! Я штучний інтелект компанії OpenDots. Як я можу допомогти?', { allowInterruptions: true });
+      console.log(`AI Agent (${dotId}) is now listening in the LiveKit room...`);
     } catch (e) {
-      console.warn('Failed to parse job metadata', e);
+      console.error('Agent entry error:', e);
     }
-    
-    if (!dotId) {
-      // fallback for auto-dispatch or virtual participants
-      dotId = (ctx as any).participant?.identity || 'unknown-dot';
-    }
-
-    const chatCtx = new llm.ChatContext();
-    chatCtx.addMessage({
-      role: 'system',
-      content: 'You are a voice assistant in the OpenDots platform. Be concise, friendly, and helpful. Respond strictly in Ukrainian. Keep answers under 3 sentences.'
-    });
-
-    const agent = voice.Agent.create({
-      instructions: 'You are a voice assistant in the OpenDots platform. Be concise, friendly, and helpful. Respond strictly in Ukrainian.',
-      vad: await silero.VAD.load(),
-      stt: new openai.STT(),
-      llm: new PlatformLLM(ctx.room.name || 'default-room', dotId),
-      tts: new openai.TTS(),
-      chatCtx
-    });
-
-    const session = new voice.AgentSession();
-    await session.start({ agent, room: ctx.room });
-    
-    await session.say('Привіт! Я штучний інтелект компанії OpenDots. Як я можу допомогти?', { allowInterruptions: true });
-    console.log(`AI Agent (${dotId}) is now listening in the LiveKit room...`);
   },
 });
 

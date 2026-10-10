@@ -26,6 +26,14 @@ export function createLocalHonoHandler(
 
   // LiveKit API (Phase 5)
   app.post('/livekit/token', async (c) => {
+    const authHeader = c.req.header('authorization') || '';
+    const tokenHeader = authHeader.replace(/^Bearer /, '');
+    const expectedToken = process.env.OWNER_TOKEN;
+    
+    if (!expectedToken || tokenHeader !== expectedToken) {
+      return c.json({ error: 'Unauthorized: Invalid ownerToken' }, 401);
+    }
+
     if (!livekitService?.isConfigured()) {
       return c.json({ error: 'LiveKit is not configured in .env' }, 500);
     }
@@ -36,6 +44,20 @@ export function createLocalHonoHandler(
       if (dotId) {
         try {
           await livekitService.dispatchAgent(roomName, dotId);
+          
+          let connected = false;
+          for (let i = 0; i < 20; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            const participants = await livekitService.roomService?.listParticipants(roomName);
+            if (participants && participants.some(p => p.identity.includes('agent') || p.identity.includes('dot'))) {
+              connected = true;
+              break;
+            }
+          }
+          if (!connected) {
+            console.warn(`Agent ${dotId} dispatch timed out.`);
+            return c.json({ error: 'Agent connection timeout' }, 504);
+          }
         } catch (dispatchErr) {
           console.warn('Explicit agent dispatch failed, might be relying on auto-dispatch:', dispatchErr);
         }
@@ -50,9 +72,17 @@ export function createLocalHonoHandler(
 
   // REST bridge for LiveKit Agents
   app.post('/livekit/turn', async (c) => {
+    const authHeader = c.req.header('authorization') || '';
+    const tokenHeader = authHeader.replace(/^Bearer /, '');
+    const expectedToken = process.env.OWNER_TOKEN;
+    
+    if (!expectedToken || tokenHeader !== expectedToken) {
+      return c.json({ error: 'Unauthorized: Invalid ownerToken' }, 401);
+    }
+
     if (!platform) return c.json({ error: 'Platform unavailable' }, 500);
     try {
-      const { roomId, prompt, dotId } = await c.req.json();
+      const { roomId, prompt, dotId, identity } = await c.req.json();
       
       const targetDotId = dotId || platform.workspace.dots()[0].id;
       const threadId = `${roomId}-${targetDotId}`; 
@@ -67,7 +97,8 @@ export function createLocalHonoHandler(
       }
 
       const controller = new AbortController();
-      const res = await platform.turnDetailed(threadId, prompt, controller.signal, { opendotsSource: 'voice_receipt' });
+      const contextPrompt = identity ? `[Speaker: ${identity}] says: ${prompt}` : prompt;
+      const res = await platform.turnDetailed(threadId, contextPrompt, controller.signal, { opendotsSource: 'voice_receipt' });
       return c.json({ text: res.text, toolCalls: res.toolCalls });
     } catch (e: any) {
       console.error('LiveKit Turn Error:', e);

@@ -48,6 +48,20 @@ export class OrchestratorWorker {
         throw new Error("Task failed: No tools were executed to verify the state.");
       }
 
+      const verificationPrompt = `You are a Verification Agent. 
+Review the original task goal and the final state from the execution.
+Goal: ${task.goal}
+Inputs: ${task.inputs}
+Execution result: ${result.text}
+
+Did the execution successfully achieve the goal? You must answer exactly "VERIFIED: YES" if it succeeded, or "VERIFIED: NO" followed by the reason if it failed.`;
+
+      const verificationResult = await this.platform.turnDetailed(threadId, verificationPrompt, controller.signal);
+      
+      if (!verificationResult.text.includes("VERIFIED: YES")) {
+        throw new Error(`Task verification failed: ${verificationResult.text}`);
+      }
+
       const resultText = result.text;
       const fs = await import('node:fs/promises');
       await fs.mkdir(this.artifactsDir, { recursive: true });
